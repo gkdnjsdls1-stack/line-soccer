@@ -6,8 +6,25 @@
 <meta name="description" content="손가락으로 선을 그어 지시하는 턴제 전술 축구. 30단계 퍼즐과 기기 두 대 2인 대전.">
 <meta property="og:title" content="선 긋기 축구">
 <meta property="og:description" content="상대의 다음 수를 읽고 선으로 지시하는 전략 축구">
+<meta property="og:image" content="icon-512.png">
+<meta name="theme-color" content="#0f2a1c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="선긋기축구">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+  // 홈 화면 앱: 오프라인 지원 등록 + 기록(별)을 브라우저가 지우지 않도록 영구 저장 요청
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+</script>
 </head>
 <body>
 <title>선 긋기 축구</title>
@@ -103,6 +120,11 @@ button:disabled{opacity:.45; cursor:default; transform:none}
 .coach small{color:var(--muted); font-size:11px; text-align:right}
 @keyframes pop{from{opacity:0; transform:translate(-50%,-6px)}}
 @media (prefers-reduced-motion:reduce){.coach{animation:none}}
+.checks{list-style:none; margin:0; padding:10px 12px; background:var(--panel); border-radius:10px; display:flex; flex-direction:column; gap:5px; text-align:left; font-size:13px; color:var(--muted)}
+.checks li{display:flex; gap:8px; align-items:baseline}
+.checks li span{color:#3d6a50; font-size:14px}
+.checks li.ok{color:var(--ink)}
+.checks li.ok span{color:var(--mate)}
 .row{display:grid; grid-template-columns:1fr 1fr; gap:8px}
 .center{text-align:center}
 </style>
@@ -154,6 +176,7 @@ button:disabled{opacity:.45; cursor:default; transform:none}
     <div class="card center">
       <h2 id="rTitle"></h2>
       <div class="bigstars" id="rStars"></div>
+      <ul class="checks" id="rChecks"></ul>
       <p id="rMsg"></p>
       <div class="row">
         <button class="ghost" id="rRetry" type="button">다시</button>
@@ -503,12 +526,28 @@ button:disabled{opacity:.45; cursor:default; transform:none}
       const atkWon = result === 'clear', iWon = (VS.role === 'atk') === atkWon;
       msg = title + ' · ' + (atkWon ? '공격 팀 승리' : '수비 팀 승리');
       title = iWon ? '승리!' : '패배';
-    } else if (result === 'clear') {
-      if (P.mode === 'atk') s = 1 + (turn <= P.par ? 1 : 0) + (thirdMan ? 1 : 0);
-      else s = 1 + (turn <= P.par ? 1 : 0) + (turn === 1 ? 1 : 0);
-      stars[P.id] = Math.max(stars[P.id] || 0, s); saveStars(stars);
     }
-    outcome = { result, title, msg, s, raw };
+    // 별 기준: 3자 침투로 넣은 골은 침투에 쓴 한 턴을 보상해 기준 턴 +1까지 인정
+    let checks = null;
+    if (!VS) {
+      const ok = result === 'clear';
+      if (P.mode === 'atk') {
+        const parT = P.par + (thirdMan ? 1 : 0);
+        checks = [
+          { ok, label: '골 넣기' },
+          { ok: ok && turn <= parT, label: `${P.par}턴 이내 골` + (thirdMan ? ' (3자 침투 보너스로 ' + parT + '턴까지 인정)' : '') },
+          { ok: ok && thirdMan, label: '3자 침투 (A→B 다음 B→C 패스)' },
+        ];
+      } else {
+        checks = [
+          { ok, label: '공 뺏기' },
+          { ok: ok && turn <= P.par, label: `${P.par}턴 이내에 뺏기` },
+          { ok: ok && turn === 1, label: '1턴 만에 뺏기' },
+        ];
+      }
+      if (ok) { s = checks.filter(c => c.ok).length; stars[P.id] = Math.max(stars[P.id] || 0, s); saveStars(stars); }
+    }
+    outcome = { result, title, msg, s, raw, checks };
     if (VS && VS.host) vsWriteState();
     setTimeout(showResult, 900);
     refreshUI();
@@ -525,7 +564,7 @@ button:disabled{opacity:.45; cursor:default; transform:none}
       return;
     }
     if (kicker && kicker !== p && P.mode === 'atk') {
-      if (lastPass && lastPass.to === kicker && lastPass.from !== p) { thirdMan = true; popup('3자 침투!', p.x, p.y - 44, '#9ff0b8', true); coach('third', '주고받는 사이 <b>세 번째 선수</b>가 받으면 3자 침투! 별 하나 더 받아요.'); }
+      if (lastPass && lastPass.to === kicker && lastPass.from !== p) { thirdMan = true; popup('3자 침투!', p.x, p.y - 44, '#9ff0b8', true); coach('third', '주고받는 사이 <b>세 번째 선수</b>가 받으면 3자 침투! 별 하나 더, 기준 턴도 <b>+1턴</b> 인정돼요.'); }
       else popup('패스 성공', p.x, p.y - 26, '#ffe066');
       lastPass = { from: kicker, to: p };
     }
@@ -862,6 +901,8 @@ button:disabled{opacity:.45; cursor:default; transform:none}
     $('rStars').innerHTML = outcome.result === 'clear'
       ? `${'★'.repeat(outcome.s)}<span class="off" style="color:#3d6a50">${'★'.repeat(3 - outcome.s)}</span>` : '';
     $('rMsg').textContent = outcome.msg;
+    $('rChecks').innerHTML = (outcome.checks || []).map(c => `<li class="${c.ok ? 'ok' : ''}"><span>${c.ok ? '★' : '☆'}</span>${c.label}</li>`).join('');
+    $('rChecks').hidden = !outcome.checks;
     $('rNext').textContent = VS ? '나가기' : pIndex < PUZZLES.length - 1 && unlocked(pIndex + 1) ? '다음 단계' : '목록으로';
     ui.result.hidden = false;
     renderList();
